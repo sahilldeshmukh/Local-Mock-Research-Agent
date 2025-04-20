@@ -1,0 +1,52 @@
+from langchain.chains import RetrievalQA
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.llms import HuggingFacePipeline
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+
+model_name = "google/flan-t5-small"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+hf_pipeline = pipeline("text2text-generation", model=model, tokenizer=tokenizer, max_new_tokens=256)
+llm = HuggingFacePipeline(pipeline=hf_pipeline)
+
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+
+def research_agent():
+    docs = [
+        Document(page_content="""
+        Climate change is leading to increased temperatures, altered rainfall patterns, and more frequent extreme weather events.
+        These changes significantly impact crop yields, particularly in vulnerable regions like sub-Saharan Africa and South Asia.
+        """, metadata={"source": "IPCC Report 2023"}),
+
+        Document(page_content="""
+        Rising CO2 levels may initially stimulate plant growth, but associated heat stress, droughts, and flooding can drastically reduce productivity.
+        Staple crops such as wheat, maize, and rice are especially at risk.
+        """, metadata={"source": "UN FAO Climate Brief"}),
+
+        Document(page_content="""
+        Adaptive strategies include developing drought-resistant crop varieties, shifting planting calendars, and improving irrigation systems.
+        However, implementation barriers include cost, infrastructure, and policy gaps.
+        """, metadata={"source": "Nature Climate Review"})
+    ]
+
+    chunks = text_splitter.split_documents(docs)
+    vectorstore = FAISS.from_documents(chunks, embeddings)
+    return vectorstore, docs
+
+def answer_drafter_agent(query, vectorstore, docs):
+    qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=vectorstore.as_retriever())
+    answer = qa_chain.run(query)
+    sources = "\n".join(f"- {doc.metadata['source']}" for doc in docs)
+    return f"{answer}\n\nSources Consulted:\n{sources}"
+
+if __name__ == "__main__":
+    query = input("Enter your research query: ")
+    vs, sources = research_agent()
+    final_answer = answer_drafter_agent(query, vs, sources)
+
+    print("\n--- Final Research Summary ---\n")
+    print(final_answer)
